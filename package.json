@@ -1,0 +1,12 @@
+{
+  "name": "dsh-memx-inject",
+  "version": "0.1.0",
+  "description": "DeepSeek Harness plugin: inject local memory candidates into context each turn, cache-safe and block-level located",
+  "type": "module",
+  "main": "src/index.js",
+  "files": ["src", "README.md", "LICENSE"],
+  "keywords": ["dsh", "deepseek-harness", "memory", "context", "plugin"],
+  "license": "MIT",
+  "engines": { "node": ">=22" },
+  "dsh": { "bundle": true }
+}
