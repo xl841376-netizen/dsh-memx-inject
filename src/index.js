@@ -16,7 +16,7 @@ export const inject = ['agentLoop'];
 // 默认值是本机路径，部署时用 config.cli 覆盖。
 const DEFAULT_CLI = '/opt/dsh-mcp/cand_cli.py';
 
-function runCandidates(text, k, timeoutMs) {
+function runCandidates(text, k, timeoutMs, cli) {
   return new Promise((resolve) => {
     let out = '';
     let settled = false;
@@ -28,7 +28,8 @@ function runCandidates(text, k, timeoutMs) {
       resolve(v);
     };
     try {
-      child = spawn(config.python || 'python3', [cli, text, String(k)], { stdio: ['ignore', 'pipe', 'ignore'] });
+      // 直接执行 cli（不再包一层 python3）：后端可以是任何带 shebang 的可执行文件
+      child = spawn(cli, [text, String(k)], { stdio: ['ignore', 'pipe', 'ignore'] });
     } catch {
       return resolve(null);
     }
@@ -74,7 +75,7 @@ export function apply(ctx, config = {}) {
         if (text.length < 4) return base;
         const sid = payload.agent?.session?.id ?? 'default';
         const seen = pushed.get(sid) || new Set();
-        const res = await runCandidates(text, topK + 2, timeoutMs);
+        const res = await runCandidates(text, topK + 2, timeoutMs, cli);
         const mem = (res && res.memory) || [];
         // pinned：记忆里带 `> pin:` 且关键词命中 → 无条件推送，绕过分数/名次/去重
         const pins = ((res && res.pinned) || []).filter((p) => !text.includes(p.id));

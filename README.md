@@ -110,6 +110,85 @@ cli <query-text> <k>   # stdout 输出一行 JSON
 
 协议缺失时插件 fail-open：任何异常/超时都原样放行，绝不影响正常对话。
 
+### 接入条件（必须 / 禁止）
+
+一个后端要能被这个插件接上，至少要满足以下几条——**不满足不会报错，只会静默不推**（fail-open 的代价）：
+
+**必须**
+
+| 条件 | 说明 |
+|---|---|
+| 单次调用的 stdout 是**恰好一个** JSON 对象 | 插件对 stdout 做整体 `JSON.parse`，不接受 NDJSON、不接受前后缀文本 |
+| 完整退出在超时内 | 默认 `timeoutMs: 20000`；超时即 `kill` 并按“无结果”处理 |
+| 正常退出码 | 非零退出视为失败，不会重试 |
+| `id` 唯一且稳定 | 插件用它做**同会话去重**（同一 `id` 一轮后被记住不再推）。id 不稳定 → 同一内容反复推 |
+| `v` 是数字 | `minScore` / `strongScore` / margin 判定都依赖它；缺 `v` 视为 0，会被过滤掉 |
+| 编码 UTF-8 | 中文标题、`snip` 里的行号都一样 |
+
+**禁止**
+
+| 禁止项 | 后果 |
+|---|---|
+| 往 **stdout** 打日志、进度、警告 | JSON 解析失败 → 静默不推。所有诊断信息请走 **stderr**（插件不读 stderr） |
+| 等待 stdin | 子进程的 stdin 是 `ignore`，等待会直接卡到超时 |
+| 依赖交互式终端 / TTY | 无 TTY，颜色码、分页、光标控制都无意义 |
+| 返回超过请求的 `k` 条 | 不报错，但会被截断，白算 |
+
+### 参数含义
+
+```bash
+cli <query-text> <k>
+```
+
+- `query-text`：最近 **1–2 条真人消息**拼接（≤800 字），不是整段会话。
+- `k`：插件请求的**上限**（= `topK + 2`），后端可以返回更少；返回 0 条是完全合法且常见的。
+- 后端**不需要**做“推几条”的决策——那是插件的 `minScore` / `strongScore` / `minMargin` 和候选服务的分数形态共同决定的。后端只要给出**分数**，越能反映真实相关性越好。
+
+### 最小可运行后端
+
+后端只需要是**带 shebang 的可执行文件**（插件直接 `spawn` 它，不再包一层解释器），语言不限：
+
+```bash
+#!/usr/bin/env bash
+# /tmp/mini-cand.sh —— 只回一条固定候选，用来证明协议通了
+printf '{"memory":[{"id":"hello","t":"测试候选","v":0.9,"s":"ok"}],"pinned":[]}\n'
+```
+
+```bash
+chmod +x /tmp/mini-cand.sh
+```
+
+```yaml
+# cordis.patch.yml
+- insert:
+    - id: memx-inject
+      name: '@local/memx-inject'
+      config:
+        cli: /tmp/mini-cand.sh
+```
+
+### 接入前先自检协议
+
+不必先重启 DSH，直接按插件的方式调一次后端，验证 stdout 是合法单对象 JSON：
+
+```bash
+/path/to/your-cli "测试查询" 3 \
+  | python3 -c 'import json,sys; d=json.load(sys.stdin); print("ok memory=%d pinned=%d" % (len(d.get("memory",[])), len(d.get("pinned",[]))))'
+```
+
+打印 `ok memory=N pinned=M` 即协议通过。若报 `JSONDecodeError`，多半是后端往 **stdout** 打了日志（见上文禁止项）。
+
+Web UI 中注入内容不可见（见文首声明），所以不要用“页面上有没有出现”来判断接入成功——用上面的自检，或直接查会话记录里的 `memory-candidates`。
+
+### 扩展点
+
+| 想扩展 | 怎么做 |
+|---|---|
+| 换记忆后端 | 实现上面的协议，改 `config.cli` |
+| 自定义字段 | 后端多返回即可，插件忽略不认识的字段（`snip` 就是这类可选扩展） |
+| 自定义召回算法 | 后端内部的事，插件不可见 |
+| 换模型 | 无需改动——注入的是纯文本 |
+
 ## 隐私提醒
 
 - 注入内容会随对话进入模型请求，**不要**让候选服务返回密钥、令牌、个人信息。
