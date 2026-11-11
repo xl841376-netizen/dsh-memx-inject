@@ -70,8 +70,19 @@ export function apply(ctx, config = {}) {
         const human = msgs.filter((m) => m.role === 'user' && (!m.source || m.source.kind === 'user'));
         const textOf = (m) => (typeof m.content === 'string' ? m.content
           : (m.content || []).map((c) => c.text || '').join(''));
-        const text = (human.length ? human.slice(-2) : msgs.slice(-2))
-          .map(textOf).join('\n').trim().slice(0, 800);
+        const textBase = (human.length ? human.slice(-2) : msgs.slice(-2))
+          .map(textOf).join('\n').trim();
+        // 用户常只回「要」「继续」，单靠人类消息 query 几乎没有信息量。
+        // 补两样：最近一条 assistant 回复的结论段（前 400 字）+ 从两边抽出的
+        // 路径/长标识符锚点（setup_input_layout、/root/npu_test/re 这类），
+        // 让「只说了一个字」的那轮也能命中正确的记忆。
+        const lastAssist = msgs.filter((m) => m.role === 'assistant')
+          .slice(-1).map(textOf).join('').trim();
+        const anchorRe = /(?:\/(?:root|opt|var|etc|usr|home)\/[\w./-]+|[A-Za-z_]\w{8,})/g;
+        const anchors = [...new Set(((textBase + ' ' + lastAssist).match(anchorRe)) || [])]
+          .slice(0, 12);
+        const text = [textBase, lastAssist.slice(0, 400), anchors.join(' ')]
+          .filter(Boolean).join('\n').slice(0, 1400);
         if (text.length < 4) return base;
         const sid = payload.agent?.session?.id ?? 'default';
         const seen = pushed.get(sid) || new Set();
